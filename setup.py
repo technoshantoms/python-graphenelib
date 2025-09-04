@@ -1,18 +1,52 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
+#!/usr/bin/env python
 
 from setuptools import setup
 
-__version__ = "1.6.1"
+# Work around mbcs bug in distutils.
+# http://bugs.python.org/issue10945
+import codecs
+try:
+    codecs.lookup('mbcs')
+except LookupError:
+    ascii = codecs.lookup('ascii')
+    codecs.register(lambda name, enc=ascii: {True: enc}.get(name == 'mbcs'))
+
+VERSION = '0.6.1'
 
 setup(
-    version=__version__,
-    install_requires=open("requirements.txt").readlines(),
-    tests_require=open("requirements-test.txt").readlines(),
-    include_package_data=True,  # needed for data from manifest
-    # Use git repo data (latest tag, current commit hash, etc) for building a
-    # version number according PEP 440. Conflicts with semantic-release
-    setuptools_git_versioning={
-        "enabled": False,
-    },
+    name='graphenelib',
+    version=VERSION,
+    description='Python library for graphene-based blockchains',
+    long_description=open('README.md').read(),
+    download_url='https://github.com/xeroc/python-graphenelib/tarball/' + VERSION,
+    author='Fabian Schuh',
+    author_email='Fabian@chainsquad.com',
+    maintainer='Fabian Schuh',
+    maintainer_email='Fabian@chainsquad.com',
+    url='http://www.github.com/xeroc/python-graphenelib',
+    keywords=[
+        'graphene',
+        'api',
+        'rpc',
+        'ecdsa',
+        'secp256k1'
+    ],
+    packages=["grapheneapi",
+              "graphenebase",
+              ],
+    install_requires=["ecdsa",
+                      "requests",
+                      "websocket-client",
+                      "pylibscrypt",
+                      "pycryptodome",
+                      ],
+    classifiers=['License :: OSI Approved :: MIT License',
+                 'Operating System :: OS Independent',
+                 'Programming Language :: Python :: 3',
+                 'Development Status :: 3 - Alpha',
+                 'Intended Audience :: Developers',
+                 ],
+    setup_requires=['pytest-runner'],
+    tests_require=['pytest'],
+    include_package_data=True,
 )

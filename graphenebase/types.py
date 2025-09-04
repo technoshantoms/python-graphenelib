@@ -1,31 +1,34 @@
-# -*- coding: utf-8 -*-
 import json
 import struct
 import time
 from calendar import timegm
+from datetime import datetime
 from binascii import hexlify, unhexlify
+from collections import OrderedDict
 from .objecttypes import object_type
-from .utils import unicodify
 
-timeformat = "%Y-%m-%dT%H:%M:%S%Z"
+timeformat = '%Y-%m-%dT%H:%M:%S%Z'
 
 
 def varint(n):
-    """Varint encoding"""
-    data = b""
+    """ Varint encoding
+    """
+    data = b''
     while n >= 0x80:
-        data += bytes([(n & 0x7F) | 0x80])
+        data += bytes([(n & 0x7f) | 0x80])
         n >>= 7
     data += bytes([n])
     return data
 
 
-def varintdecode(data):  # pragma: no cover
-    """Varint decoding"""
+def varintdecode(data):
+    """ Varint decoding
+    """
     shift = 0
     result = 0
-    for b in bytes(data):
-        result |= (b & 0x7F) << shift
+    for c in data:
+        b = ord(c)
+        result |= ((b & 0x7f) << shift)
         if not (b & 0x80):
             break
         shift += 7
@@ -33,27 +36,18 @@ def varintdecode(data):  # pragma: no cover
 
 
 def variable_buffer(s):
-    """Encode variable length buffer"""
+    """ Encode variable length buffer
+    """
     return varint(len(s)) + s
 
 
 def JsonObj(data):
-    """Return json object from data
-
-    If data has a __json__() method, use that, else assume it follows the
-    convention that its string representation is interprettable as valid json.
-    (The latter can be problematic if str(data) returns, e.g., "1234". Was
-    this supposed to be the string "1234" or the number 1234? If this
-    ambiguity exists, the data type must implement __json__().)
-
+    """ Returns json object from data
     """
-    try:
-        return data.__json__()
-    except Exception:
-        return json.loads(str(data))
+    return json.loads(str(data))
 
 
-class Uint8:
+class Uint8():
     def __init__(self, d):
         self.data = int(d)
 
@@ -61,10 +55,10 @@ class Uint8:
         return struct.pack("<B", self.data)
 
     def __str__(self):
-        return "%d" % self.data
+        return '%d' % self.data
 
 
-class Int16:
+class Int16():
     def __init__(self, d):
         self.data = int(d)
 
@@ -72,10 +66,10 @@ class Int16:
         return struct.pack("<h", int(self.data))
 
     def __str__(self):
-        return "%d" % self.data
+        return '%d' % self.data
 
 
-class Uint16:
+class Uint16():
     def __init__(self, d):
         self.data = int(d)
 
@@ -83,10 +77,10 @@ class Uint16:
         return struct.pack("<H", self.data)
 
     def __str__(self):
-        return "%d" % self.data
+        return '%d' % self.data
 
 
-class Uint32:
+class Uint32():
     def __init__(self, d):
         self.data = int(d)
 
@@ -94,10 +88,10 @@ class Uint32:
         return struct.pack("<I", self.data)
 
     def __str__(self):
-        return "%d" % self.data
+        return '%d' % self.data
 
 
-class Uint64:
+class Uint64():
     def __init__(self, d):
         self.data = int(d)
 
@@ -105,10 +99,10 @@ class Uint64:
         return struct.pack("<Q", self.data)
 
     def __str__(self):
-        return "%d" % self.data
+        return '%d' % self.data
 
 
-class Varint32:
+class Varint32():
     def __init__(self, d):
         self.data = int(d)
 
@@ -116,10 +110,10 @@ class Varint32:
         return varint(self.data)
 
     def __str__(self):
-        return "%d" % self.data
+        return '%d' % self.data
 
 
-class Int64:
+class Int64():
     def __init__(self, d):
         self.data = int(d)
 
@@ -127,99 +121,76 @@ class Int64:
         return struct.pack("<q", self.data)
 
     def __str__(self):
-        return "%d" % self.data
+        return '%d' % self.data
 
 
-class String:
+class String():
     def __init__(self, d):
         self.data = d
 
     def __bytes__(self):
-        if self.data:
-            d = unicodify(self.data)
+        d = self.unicodify()
+        return varint(len(d)) + d
+
+    def __str__(self):
+        return '%s' % str(self.data)
+
+    def unicodify(self):
+        r = []
+        for s in self.data:
+            o = ord(s)
+            if o <= 7:
+                r.append("u%04x" % o)
+            elif o == 8:
+                r.append("b")
+            elif o == 9:
+                r.append("\t")
+            elif o == 10:
+                r.append("\n")
+            elif o == 11:
+                r.append("u%04x" % o)
+            elif o == 12:
+                r.append("f")
+            elif o == 13:
+                r.append("\r")
+            elif o > 13 and o < 32:
+                r.append("u%04x" % o)
+            else:
+                r.append(s)
+        return bytes("".join(r), "utf-8")
+
+
+class Bytes():
+    def __init__(self, d, length=None):
+        self.data = d
+        if length:
+            self.length = length
         else:
-            d = b""
+            self.length = len(self.data)
+
+    def __bytes__(self):
+        # FIXME constraint data to self.length
+        d = unhexlify(bytes(self.data, 'utf-8'))
         return varint(len(d)) + d
 
     def __str__(self):
-        return "%s" % str(self.data)
-
-
-class Bytes:
-    """Bytes
-
-    Initializes from and stores internally as a string of hex digits.
-    Byte-serializes as a length-prefixed series of bytes represented
-    by those hex digits.
-
-    Ex: len(str(Bytes("deadbeef")) == 8   # Eight hex chars
-        len(bytes(Bytes("deadbeef")) == 5 # Four data bytes plus varint length
-
-    Implements __json__() method to disambiguate between string and numeric in
-    event where hex digits include only numeric digits and no alpha digits.
-
-    """
-
-    def __init__(self, d):
-        self.data = d
-
-    def __bytes__(self):
-        d = unhexlify(bytes(self.data, "utf-8"))
-        return varint(len(d)) + d
-
-    def __json__(self):
-        return str(self.data)
-
-    def __str__(self):
         return str(self.data)
 
 
-class Hash(Bytes):
-    def json(self):
-        return str(self.data)
-
-    def __bytes__(self):
-        return unhexlify(bytes(self.data, "utf-8"))
-
-
-class Ripemd160(Hash):
-    def __init__(self, a):
-        assert len(a) == 40, "Require 40 char long hex"
-        super().__init__(a)
-
-
-class Sha1(Hash):
-    def __init__(self, a):
-        assert len(a) == 40, "Require 40 char long hex"
-        super().__init__(a)
-
-
-class Sha256(Hash):
-    def __init__(self, a):
-        assert len(a) == 64, "Require 64 char long hex"
-        super().__init__(a)
-
-
-class Hash160(Hash):
-    def __init__(self, a):
-        assert len(a) == 40, "Require 40 char long hex"
-        super().__init__(a)
-
-
-class Void:
+class Void():
     def __init__(self):
         pass
 
     def __bytes__(self):
-        return b""
+        return b''
 
     def __str__(self):
         return ""
 
 
-class Array:
+class Array():
     def __init__(self, d):
-        self.data = d or []
+        self.data = d
         self.length = Varint32(len(self.data))
 
     def __bytes__(self):
@@ -235,7 +206,7 @@ class Array:
         return json.dumps(r)
 
 
-class PointInTime:
+class PointInTime():
     def __init__(self, d):
         self.data = d
 
@@ -246,7 +217,7 @@ class PointInTime:
         return self.data
 
 
-class Signature:
+class Signature():
     def __init__(self, d):
         self.data = d
 
@@ -254,7 +225,7 @@ class Signature:
         return self.data
 
     def __str__(self):
-        return json.dumps(hexlify(self.data).decode("ascii"))
+        return json.dumps(hexlify(self.data).decode('ascii'))
 
 
 class Bool(Uint8):  # Bool = Uint8
@@ -270,36 +241,37 @@ class Set(Array):  # Set = Array
         super().__init__(d)
 
 
-class Fixed_array:
-    pass
+class Fixed_array():
+    def __init__(self, d):
+        raise NotImplementedError
+
+    def __bytes__(self):
+        raise NotImplementedError
+
+    def __str__(self):
+        raise NotImplementedError
 
 
-class Optional:
+class Optional():
     def __init__(self, d):
         self.data = d
 
     def __bytes__(self):
-        if not bool(self.data):
+        if not self.data:
             return bytes(Bool(0))
         else:
-            return (
-                bytes(Bool(1)) + bytes(self.data)
-                if bytes(self.data)
-                else bytes(Bool(0))
-            )
+            return bytes(Bool(1)) + bytes(self.data) if bytes(self.data) else bytes(Bool(0))
 
     def __str__(self):
         return str(self.data)
 
     def isempty(self):
-        if self.data is None:
-            return True
-        if not bool(str(self.data)):  # pragma: no cover
+        if not self.data:
             return True
         return not bool(bytes(self.data))
 
 
-class Static_variant:
+class Static_variant():
     def __init__(self, d, type_id):
         self.data = d
         self.type_id = type_id
@@ -311,7 +283,7 @@ class Static_variant:
         return json.dumps([self.type_id, self.data.json()])
 
 
-class Map:
+class Map():
     def __init__(self, data):
         self.data = data
 
@@ -325,11 +297,11 @@ class Map:
     def __str__(self):
         r = []
         for e in self.data:
-            r.append([str(e[0]), JsonObj(str(e[1]))])
+            r.append([str(e[0]), str(e[1])])
         return json.dumps(r)
 
 
-class Id:
+class Id():
     def __init__(self, d):
         self.data = Varint32(d)
 
@@ -340,7 +312,7 @@ class Id:
         return str(self.data)
 
 
-class VoteId:
+class VoteId():
     def __init__(self, vote):
         parts = vote.split(":")
         assert len(parts) == 2
@@ -348,18 +320,16 @@ class VoteId:
         self.instance = int(parts[1])
 
     def __bytes__(self):
-        binary = (self.type & 0xFF) | (self.instance << 8)
+        binary = (self.type & 0xff) | (self.instance << 8)
         return struct.pack("<I", binary)
 
     def __str__(self):
         return "%d:%d" % (self.type, self.instance)
 
 
-class ObjectId:
-    """Encodes protocol ids - serializes to the *instance* only!"""
-
-    object_types = object_type
-
+class ObjectId():
+    """ Encodes protocol ids - serializes to the *instance* only!
+    """
     def __init__(self, object_str, type_verify=None):
         if len(object_str.split(".")) == 3:
             space, type, id = object_str.split(".")
@@ -368,14 +338,10 @@ class ObjectId:
             self.instance = Id(int(id))
             self.Id = object_str
             if type_verify:
-                assert (
-                    type_verify in self.object_types
-                ), "Type {} is not defined!".format(type_verify)
-                assert self.object_types[type_verify] == int(type), (
-                    "Object id does not match object type! "
-                    + "Excpected %d, got %d"
-                    % (self.object_types[type_verify], int(type))
-                )
+                assert object_type[type_verify] == int(type),\
+                    "Object id does not match object type! " +\
+                    "Excpected %d, got %d" %\
+                    (object_type[type_verify], int(type))
         else:
             raise Exception("Object id is invalid")
 
@@ -386,9 +352,9 @@ class ObjectId:
         return self.Id
 
 
-class FullObjectId:
-    """Encodes object ids - serializes to a full object id"""
-
+class FullObjectId():
+    """ Encodes object ids - serializes to a full object id
+    """
     def __init__(self, object_str):
         if len(object_str.split(".")) == 3:
             space, type, id = object_str.split(".")
@@ -398,30 +364,27 @@ class FullObjectId:
             self.instance = Id(int(id))
             self.Id = object_str
         else:
-            raise ValueError("Object id is invalid")
+            raise Exception("Object id is invalid")
 
     def __bytes__(self):
-        return (self.space << 56 | self.type << 48 | self.id).to_bytes(
-            8, byteorder="little", signed=False
-        )
+        return (
+            self.space << 56 | self.type << 48 | self.id
+        ).to_bytes(8, byteorder="little", signed=False)
 
     def __str__(self):
         return self.Id
 
 
 class Enum8(Uint8):
-    # List needs to be provided by super class
-    options = []
-
     def __init__(self, selection):
-        if selection not in self.options or (
-            isinstance(selection, int) and len(self.options) < selection
-        ):
-            raise ValueError(
-                "Options are {}. Given '{}'".format(str(self.options), selection)
-            )
-
-        super(Enum8, self).__init__(self.options.index(selection))
+        assert selection in self.options or \
+            isinstance(selection, int) and len(self.options) < selection, \
+            "Options are %s. Given '%s'" % (
+                self.options, selection)
+        if selection in self.options:
+            super(Enum8, self).__init__(self.options.index(selection))
+        else:
+            super(Enum8, self).__init__(selection)
 
     def __str__(self):
         return str(self.options[self.data])

@@ -35,7 +35,6 @@ Python-Graphene Libraries
 
    installation
    classes
-   asyncio
 
 Graphene API
 ------------
@@ -46,14 +45,6 @@ Graphene API
    graphene-api
    witness
    wallet
-
-Packages
---------
-
-.. toctree::
-   :maxdepth: 4
-
-   modules
 
 Indices and tables
 ==================

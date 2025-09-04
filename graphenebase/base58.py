@@ -1,26 +1,35 @@
-# -*- coding: utf-8 -*-
+from binascii import hexlify, unhexlify
 import hashlib
+import sys
 import string
 import logging
-
-from binascii import hexlify, unhexlify
-from .utils import _bytes
-from .prefix import Prefix
-
 log = logging.getLogger(__name__)
 
+""" Default Prefix """
+PREFIX = "GPH"
 
-class Base58(Prefix):
+known_prefixes = [
+    PREFIX,
+    "BTS",
+    "MUSE",
+    "TEST",
+    "STM",
+    "GLX",
+    "GLS",
+    "LLC",
+]
+
+
+class Base58(object):
     """Base58 base class
 
     This class serves as an abstraction layer to deal with base58 encoded
-    strings and their corresponding hex and binary representation throughout
-    the library.
+    strings and their corresponding hex and binary representation throughout the
+    library.
 
     :param data: Data to initialize object, e.g. pubkey data, address data, ...
     :type data: hex, wif, bip38 encrypted wif, base58 string
-    :param str prefix: Prefix to use for Address/PubKey strings (defaults to
-        ``GPH``)
+    :param str prefix: Prefix to use for Address/PubKey strings (defaults to ``GPH``)
     :return: Base58 object initialized with ``data``
     :rtype: Base58
     :raises ValueError: if data cannot be decoded
@@ -28,37 +37,32 @@ class Base58(Prefix):
     * ``bytes(Base58)``: Returns the raw data
     * ``str(Base58)``:   Returns the readable ``Base58CheckEncoded`` data.
     * ``repr(Base58)``:  Gives the hex representation of the data.
-    *  ``format(Base58,_format)`` Formats the instance according to
-        ``_format``:
+    *  ``format(Base58,_format)`` Formats the instance according to ``_format``:
+        * ``"btc"``: prefixed with ``0x80``. Yields a valid btc address
         * ``"wif"``: prefixed with ``0x00``. Yields a valid wif key
         * ``"bts"``: prefixed with ``BTS``
         * etc.
 
     """
-
-    def __init__(self, data, prefix=None):
-        self.set_prefix(prefix)
-        if isinstance(data, Base58):
-            data = repr(data)
+    def __init__(self, data, prefix=PREFIX):
+        self._prefix = prefix
         if all(c in string.hexdigits for c in data):
             self._hex = data
+        elif data[:len(self._prefix)] == self._prefix:
+            self._hex = gphBase58CheckDecode(data[len(self._prefix):])
         elif data[0] == "5" or data[0] == "6":
             self._hex = base58CheckDecode(data)
-        elif data[0] == "K" or data[0] == "L":  # pragma: no cover
-            raise NotImplementedError(
-                "Private Keys starting with L or K are not supported!"
-            )
-        elif data[: len(self.prefix)] == self.prefix:
-            self._hex = gphBase58CheckDecode(data[len(self.prefix) :])
+        elif data[0] == "K" or data[0] == "L":
+            self._hex = base58CheckDecode(data)[:-2]
         else:
-            raise ValueError("Error loading Base58 object: {}".format(data))
+            raise ValueError("Error loading Base58 object")
 
     def __format__(self, _format):
-        """Format output according to argument _format (wif,...)
+        """ Format output according to argument _format (wif,btc,...)
 
-        :param str _format: Format to use
-        :return: formatted data according to _format
-        :rtype: str
+            :param str _format: Format to use
+            :return: formatted data according to _format
+            :rtype: str
 
         """
         if _format.upper() == "WIF":
@@ -67,30 +71,33 @@ class Base58(Prefix):
             return base58encode(self._hex)
         elif _format.upper() == "BTC":
             return base58CheckEncode(0x00, self._hex)
+        elif _format.upper() in known_prefixes:
+            return _format.upper() + str(self)
         else:
+            log.warn("Format %s unkown. You've been warned!\n" % _format)
             return _format.upper() + str(self)
 
     def __repr__(self):
-        """Returns hex value of object
+        """ Returns hex value of object
 
-        :return: Hex string of instance's data
-        :rtype: hex string
+            :return: Hex string of instance's data
+            :rtype: hex string
         """
         return self._hex
 
     def __str__(self):
-        """Return graphene-base58CheckEncoded string of data
+        """ Return graphene-base58CheckEncoded string of data
 
-        :return: Base58 encoded data
-        :rtype: str
+            :return: Base58 encoded data
+            :rtype: str
         """
         return gphBase58CheckEncode(self._hex)
 
     def __bytes__(self):
-        """Return raw bytes
+        """ Return raw bytes
 
-        :return: Raw bytes of instance
-        :rtype: bytes
+            :return: Raw bytes of instance
+            :rtype: bytes
 
         """
         return unhexlify(self._hex)
@@ -101,7 +108,10 @@ BASE58_ALPHABET = b"123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
 
 
 def base58decode(base58_str):
-    base58_text = _bytes(base58_str)
+    if sys.version > '3':
+        base58_text = bytes(base58_str, "ascii")
+    else:
+        base58_text = base58_str.encode("ascii")
     n = 0
     leading_zeroes_count = 0
     for b in base58_text:
@@ -115,11 +125,14 @@ def base58decode(base58_str):
         n = div
     else:
         res.insert(0, n)
-    return hexlify(bytearray(1) * leading_zeroes_count + res).decode("ascii")
+    return hexlify(bytearray(1) * leading_zeroes_count + res).decode('ascii')
 
 
 def base58encode(hexstring):
-    byteseq = unhexlify(_bytes(hexstring))
+    if sys.version > '3':
+        byteseq = bytes(unhexlify(bytes(hexstring, 'ascii')))
+    else:
+        byteseq = bytearray(unhexlify(hexstring.decode("ascii")))
     n = 0
     leading_zeroes_count = 0
     for c in byteseq:
@@ -133,21 +146,13 @@ def base58encode(hexstring):
         n = div
     else:
         res.insert(0, BASE58_ALPHABET[n])
-    return (BASE58_ALPHABET[0:1] * leading_zeroes_count + res).decode("ascii")
+    return (BASE58_ALPHABET[0:1] * leading_zeroes_count + res).decode('ascii')
 
 
 def ripemd160(s):
-    try:
-        ripemd160 = hashlib.new("ripemd160")
-        ripemd160.update(unhexlify(s))
-        return ripemd160.digest()
-    except ValueError:
-        # ripemd160 is not guaranteed to be available in hashlib on all platforms.
-        # See for reference https://github.com/bitcoin/bitcoin/issues/23710
-        # We bundle a pure python implementation as fallback that gets used now:
-        from .ripemd160 import ripemd160
-
-        return ripemd160(unhexlify(s))
+    ripemd160 = hashlib.new('ripemd160')
+    ripemd160.update(unhexlify(s))
+    return ripemd160.digest()
 
 
 def doublesha256(s):
@@ -163,29 +168,29 @@ def b58decode(v):
 
 
 def base58CheckEncode(version, payload):
-    s = ("%.2x" % version) + payload
+    s = ('%.2x' % version) + payload
     checksum = doublesha256(s)[:4]
-    result = s + hexlify(checksum).decode("ascii")
+    result = s + hexlify(checksum).decode('ascii')
     return base58encode(result)
 
 
 def base58CheckDecode(s):
     s = unhexlify(base58decode(s))
-    dec = hexlify(s[:-4]).decode("ascii")
+    dec = hexlify(s[:-4]).decode('ascii')
     checksum = doublesha256(dec)[:4]
-    assert s[-4:] == checksum
+    assert(s[-4:] == checksum)
     return dec[2:]
 
 
 def gphBase58CheckEncode(s):
     checksum = ripemd160(s)[:4]
-    result = s + hexlify(checksum).decode("ascii")
+    result = s + hexlify(checksum).decode('ascii')
     return base58encode(result)
 
 
 def gphBase58CheckDecode(s):
     s = unhexlify(base58decode(s))
-    dec = hexlify(s[:-4]).decode("ascii")
+    dec = hexlify(s[:-4]).decode('ascii')
     checksum = ripemd160(dec)[:4]
-    assert s[-4:] == checksum
+    assert(s[-4:] == checksum)
     return dec
